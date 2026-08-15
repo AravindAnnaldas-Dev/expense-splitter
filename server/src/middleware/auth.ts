@@ -1,31 +1,35 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { cookieNames } from "../lib/tokens";
 
 // TOKEN FLOW:
-// 1. On register/login, the server signs a JWT whose payload is just
-//    { userId }. The token is handed back to the client in the JSON body.
-// 2. The client stores it (see client/src/lib/auth.ts) and attaches it to
-//    every subsequent request as `Authorization: Bearer <token>`.
-// 3. This middleware runs before any protected route handler. It reads the
-//    header, verifies the signature and expiry using the same JWT_SECRET
-//    the server signed with, and — if valid — attaches `req.userId` so
-//    downstream handlers know who's asking without re-deriving it.
-// 4. Any failure (missing header, malformed token, bad signature, expired
-//    token) results in a 401 rather than letting the request through. We
-//    never trust a userId that arrives in the request body — the identity
-//    always comes from the verified token.
+// 1. On register/login, the server signs a short-lived (15m) access-token
+//    JWT and a separate long-lived (30d) opaque refresh token, and sets
+//    both as httpOnly cookies (see src/lib/tokens.ts) — never returned in
+//    the response body, so client-side JS never touches them directly.
+//    The browser attaches cookies automatically on every same-site or
+//    (with credentials: 'include') cross-site request.
+// 2. This middleware reads the access-token cookie, verifies its signature
+//    and expiry against JWT_SECRET, and attaches `req.userId` so route
+//    handlers know who's asking without re-deriving it.
+// 3. When the access token has expired, the client calls
+//    POST /api/auth/refresh (using the still-valid refresh-token cookie)
+//    to get a fresh pair, then retries the original request — see
+//    client/src/lib/api.ts for that retry logic.
+// 4. Any failure (missing cookie, tampered/expired token) results in a 401
+//    rather than letting the request through. We never trust a userId that
+//    arrives in the request body — identity always comes from the
+//    verified token.
 
 export interface AuthedRequest extends Request {
   userId?: string;
 }
 
 export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing or malformed Authorization header" });
+  const token = req.cookies?.[cookieNames.access];
+  if (!token) {
+    return res.status(401).json({ error: "Not authenticated" });
   }
-
-  const token = header.slice("Bearer ".length);
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET as string) as { userId: string };

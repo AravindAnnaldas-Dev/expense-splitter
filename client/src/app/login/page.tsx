@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import { Input } from "@/components/Input";
+import { PasswordInput } from "@/components/PasswordInput";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 
@@ -30,15 +31,14 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-sm p-8">
+      <Card className="w-full max-w-sm p-6 sm:p-8">
         <h1 className="text-xl font-semibold text-foreground">Welcome back</h1>
         <p className="mt-1 text-sm text-muted">Log in to see your groups.</p>
 
         <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
           <Input label="Email" type="email" name="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          <Input
+          <PasswordInput
             label="Password"
-            type="password"
             name="password"
             required
             value={password}

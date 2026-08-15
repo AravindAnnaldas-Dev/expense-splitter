@@ -26,42 +26,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-    // Session persistence: a token in localStorage is validated against
-    // the server on load (rather than trusting it blindly) so an expired
-    // or revoked token doesn't silently render a broken authenticated UI.
+    // Session persistence now lives entirely in httpOnly cookies the
+    // browser sends automatically — there's no client-readable token to
+    // check first. We just ask the server "who am I" on load; api()'s
+    // built-in refresh-on-401 (see lib/api.ts) transparently renews the
+    // access token via the refresh cookie if it had expired, so this
+    // still succeeds across page reloads as long as the refresh token
+    // (30 days) hasn't also expired.
     api<{ user: User }>("/api/auth/me")
       .then(({ user }) => setUser(user))
-      .catch(() => localStorage.removeItem("token"))
+      .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
 
   async function login(email: string, password: string) {
-    const { user, token } = await api<{ user: User; token: string }>("/api/auth/login", {
+    const { user } = await api<{ user: User }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    localStorage.setItem("token", token);
     setUser(user);
     router.push("/groups");
   }
 
   async function register(name: string, email: string, password: string) {
-    const { user, token } = await api<{ user: User; token: string }>("/api/auth/register", {
+    const { user } = await api<{ user: User }>("/api/auth/register", {
       method: "POST",
       body: JSON.stringify({ name, email, password }),
     });
-    localStorage.setItem("token", token);
     setUser(user);
     router.push("/groups");
   }
 
-  function logout() {
-    localStorage.removeItem("token");
+  async function logout() {
+    // Best-effort: even if this fails (e.g. network hiccup), the cookies
+    // are set to expire and the client-side user state is cleared
+    // regardless, so the UI never gets stuck "logged in" locally.
+    await api("/api/auth/logout", { method: "POST" }).catch(() => {});
     setUser(null);
     router.push("/login");
   }

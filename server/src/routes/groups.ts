@@ -93,6 +93,68 @@ router.delete("/:id", async (req: AuthedRequest, res) => {
   res.status(204).send();
 });
 
+router.delete("/:id/members/:memberId", async (req: AuthedRequest, res) => {
+  const membership = await getMembership(req.params.id, req.userId as string);
+  if (!membership) return res.status(403).json({ error: "You are not a member of this group" });
+
+  const target = await prisma.groupMember.findUnique({ where: { id: req.params.memberId } });
+  if (!target || target.groupId !== req.params.id) {
+    return res.status(404).json({ error: "Member not found in this group" });
+  }
+
+  // A member with existing expense shares can't be cleanly removed — doing
+  // so would either cascade-delete their shares (silently changing past
+  // balances) or leave dangling references. Simplest safe rule: only allow
+  // removing members who paid nothing and owe nothing yet.
+  const hasActivity = await prisma.expenseShare.findFirst({ where: { memberId: target.id } });
+  const hasPaid = await prisma.expense.findFirst({ where: { paidById: target.id } });
+  if (hasActivity || hasPaid) {
+    return res.status(409).json({ error: "Can't remove a member who is part of existing expenses" });
+  }
+
+  await prisma.groupMember.delete({ where: { id: target.id } });
+  res.status(204).send();
+});
+
+const createSettlementSchema = z.object({
+  fromId: z.string().min(1), // GroupMember who paid
+  toId: z.string().min(1), // GroupMember who received
+  amount: z.number().int().positive("Amount must be a positive integer (smallest currency unit)"),
+});
+
+// POST /:id/settlements — records a real-world payment (e.g. "Bob paid
+// Alice back in cash"). This is distinct from the settlement *suggestions*
+// GET /:id/balances returns — those are computed on the fly and never
+// stored. This is the write side that actually changes future balance
+// calculations, by adding a row that computeGroupBalances nets against the
+// expense/share totals.
+router.post("/:id/settlements", async (req: AuthedRequest, res) => {
+  const membership = await getMembership(req.params.id, req.userId as string);
+  if (!membership) return res.status(403).json({ error: "You are not a member of this group" });
+
+  const parsed = createSettlementSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+  const { fromId, toId, amount } = parsed.data;
+
+  if (fromId === toId) {
+    return res.status(400).json({ error: "A settlement must be between two different members" });
+  }
+
+  const members = await prisma.groupMember.findMany({
+    where: { id: { in: [fromId, toId] }, groupId: req.params.id },
+    select: { id: true },
+  });
+  if (members.length !== 2) {
+    return res.status(400).json({ error: "Both members must belong to this group" });
+  }
+
+  const settlement = await prisma.settlement.create({
+    data: { groupId: req.params.id, fromId, toId, amount },
+  });
+
+  res.status(201).json({ settlement });
+});
+
 // GET /:id/balances — the core reporting endpoint. Always derived live from
 // expenses + shares + settlements (see utils/balance.ts), never cached.
 router.get("/:id/balances", async (req: AuthedRequest, res) => {
