@@ -102,10 +102,11 @@ e.g. Render, Fly.io):
 3. Add a **PostgreSQL** database to the same project (Railway → *+ New →
    Database → PostgreSQL*), then set `DATABASE_URL` on the server service to
    reference it.
-4. Set the remaining env vars: `JWT_SECRET`, `JWT_EXPIRES_IN`, `CLIENT_ORIGIN`
-   (your deployed client URL), and `PORT` (match whatever port your
-   Networking/domain settings forward to — Railway doesn't always inject
-   this automatically, so set it explicitly, e.g. `8080`).
+4. Set the remaining env vars: `JWT_SECRET`, `CLIENT_ORIGIN` (your deployed
+   client URL), `COOKIE_SECURE=true` (required — see note below), and
+   `PORT` (match whatever port your Networking/domain settings forward to —
+   Railway doesn't always inject this automatically, so set it explicitly,
+   e.g. `8080`).
 5. Build command: `npm install && npx prisma generate && npm run build`
    Start command: `npx prisma migrate deploy && npm start`
 6. Generate a public domain under the service's **Settings → Networking**
@@ -116,9 +117,32 @@ e.g. Render, Fly.io):
 
 1. Import the same repo, set **Root Directory** to `client` (same monorepo
    reasoning as above).
-2. Add env var `NEXT_PUBLIC_API_URL` = your Railway server's public URL.
+2. Add env var `API_PROXY_TARGET` = your Railway server's public URL (e.g.
+   `https://splitzy-api.up.railway.app`). **Do not** set
+   `NEXT_PUBLIC_API_URL` in production — see the note below on why.
 3. Deploy. Then go back to Railway and set `CLIENT_ORIGIN` to the resulting
-   Vercel URL, so CORS allows requests from it.
+   Vercel URL.
+
+### Why API calls are proxied through the client's own domain
+
+The client and server are deployed on different domains (`*.vercel.app`
+and `*.railway.app`). Early on, the client called the API directly
+cross-domain — this worked in desktop Chrome, but **broke silently on
+Safari/iOS**: Safari's cross-site tracking prevention drops cookies set by
+a different registrable domain than the page you're on, regardless of
+`SameSite`/`Secure` attributes. Symptom: login appears to succeed, the
+groups list shows empty, and refreshing bounces you back to `/login` —
+because the auth cookies were never actually stored.
+
+The fix (`client/next.config.mjs`) proxies every `/api/*` request through
+the client's own origin to the real backend, server-to-server. From the
+browser's point of view it's now a same-origin request, so the cookies it
+gets back are first-party and Safari has no reason to block them. This is
+why production sets `API_PROXY_TARGET` (server-side only, used by the
+rewrite) instead of `NEXT_PUBLIC_API_URL` (which would make the browser
+call the Railway domain directly again). Locally, client and server are
+both `localhost` — already "same site" — so local dev skips the proxy and
+calls `http://localhost:4000` directly via `NEXT_PUBLIC_API_URL`.
 
 ---
 

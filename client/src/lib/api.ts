@@ -1,4 +1,11 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+// In local dev, NEXT_PUBLIC_API_URL points straight at the server
+// (http://localhost:4000 — see .env.local.example) since client and server
+// are "same site" there (both localhost) and cookies work fine directly.
+// In production this is left UNSET on purpose: an empty base means every
+// request path is relative to this app's own origin, which Next's rewrite
+// (next.config.mjs) then proxies to the real API server-side — see that
+// file for why (Safari's cross-site cookie blocking).
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export class ApiError extends Error {
   status: number;
