@@ -3,21 +3,27 @@
 A small expense-splitting app: create groups, log shared expenses, and see
 who owes whom — settled with the fewest possible transactions.
 
-**Live demo:** _\<add your deployed URL here\>_
+**Live demo:** [splitzy-expense-tracker.vercel.app](https://splitzy-expense-tracker.vercel.app/)
+**API:** `https://splitzy-api.up.railway.app`
+
+> The deployed instance starts with an empty database — register a new
+> account to try it out, or seed it first (see
+> [Seeding a remote database](#seeding-a-remote-database)).
 
 **Screenshots:**
 
 | Dashboard | Group detail |
 | --- | --- |
-| _\<screenshot\>_ | _\<screenshot\>_ |
+| ![Dashboard](docs/dashboard.png) | ![Group detail](docs/group-detail.png) |
 
 ---
 
 ## Stack
 
 - **Client:** Next.js 14 (App Router), TypeScript, Tailwind CSS, React Query
-- **Server:** Node.js, Express, TypeScript, Prisma ORM, PostgreSQL
+- **Server:** Node.js, Express, TypeScript, Prisma ORM 7 (driver adapters), PostgreSQL
 - **Auth:** JWT + bcrypt
+- **Hosting:** Vercel (client) + Railway (server + Postgres)
 
 ## Project structure
 
@@ -51,6 +57,8 @@ npm run seed                         # optional: sample users + a group
 npm run dev                          # starts on http://localhost:4000
 ```
 
+Prisma 7 reads connection info from `server/prisma.config.ts` (via `@prisma/adapter-pg`) rather than from a `url` in `schema.prisma` — both the CLI and the running app pull `DATABASE_URL` from the same `.env`, so there's nothing extra to configure beyond setting that one variable.
+
 Seeded accounts (if you run `npm run seed`): `alice@example.com`,
 `bob@example.com`, `carol@example.com`, all with password `password123`.
 
@@ -66,13 +74,51 @@ npm run dev                        # starts on http://localhost:3000
 Open `http://localhost:3000`, register an account (or log in with a seeded
 one), create a group, and add an expense.
 
+### Seeding a remote database
+
+Running `npm run seed` uses whatever `DATABASE_URL` is in your local `.env`
+— to seed a database hosted elsewhere (e.g. Railway), point it there
+instead, temporarily, without touching your `.env` file:
+
+```bash
+cd server
+DATABASE_URL="<remote-connection-string>" npm run seed
+```
+
+On Railway specifically: your service's own `DATABASE_URL` variable uses
+the internal hostname `postgres.railway.internal`, which only resolves
+*inside* Railway's network — it won't connect from your laptop. Use
+**`DATABASE_PUBLIC_URL`** instead (found on the Postgres service's
+**Variables** tab), which is reachable from anywhere.
+
 ### Deploying
 
-- **Server:** any Node host that supports a long-running process (Railway,
-  Render, Fly.io). Point `DATABASE_URL` at a managed Postgres instance and
-  run `npx prisma migrate deploy` as part of your build/release step.
-- **Client:** Vercel is the path of least resistance for a Next.js App
-  Router project. Set `NEXT_PUBLIC_API_URL` to your deployed server's URL.
+**Server — Railway** (or any host that supports a long-running Node process,
+e.g. Render, Fly.io):
+
+1. Push this repo to GitHub and create a new Railway project from it.
+2. This is a monorepo, so set the service's **Root Directory** to `server`
+   — otherwise Railway's build tool can't tell which app to build.
+3. Add a **PostgreSQL** database to the same project (Railway → *+ New →
+   Database → PostgreSQL*), then set `DATABASE_URL` on the server service to
+   reference it.
+4. Set the remaining env vars: `JWT_SECRET`, `JWT_EXPIRES_IN`, `CLIENT_ORIGIN`
+   (your deployed client URL), and `PORT` (match whatever port your
+   Networking/domain settings forward to — Railway doesn't always inject
+   this automatically, so set it explicitly, e.g. `8080`).
+5. Build command: `npm install && npx prisma generate && npm run build`
+   Start command: `npx prisma migrate deploy && npm start`
+6. Generate a public domain under the service's **Settings → Networking**
+   (e.g. `splitzy-api.up.railway.app`). Verify with:
+   `curl https://splitzy-api.up.railway.app/health` → `{"ok":true}`.
+
+**Client — Vercel:**
+
+1. Import the same repo, set **Root Directory** to `client` (same monorepo
+   reasoning as above).
+2. Add env var `NEXT_PUBLIC_API_URL` = your Railway server's public URL.
+3. Deploy. Then go back to Railway and set `CLIENT_ORIGIN` to the resulting
+   Vercel URL, so CORS allows requests from it.
 
 ---
 
