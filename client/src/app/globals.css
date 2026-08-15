@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 255 255 255;
+  --foreground: 23 23 25;
+  --surface: 250 250 250;
+  --border: 228 228 231;
+  --muted: 113 113 122;
+  --accent: 79 70 229; /* indigo-600 — the single restrained accent color */
+  --accent-fg: 255 255 255;
+  --danger: 220 38 38;
+  --success: 22 163 74;
+}
+
+.dark {
+  --background: 10 10 11;
+  --foreground: 244 244 245;
+  --surface: 24 24 27;
+  --border: 39 39 42;
+  --muted: 161 161 170;
+  --accent: 129 140 248; /* indigo-400 — lighter so it stays legible on dark surfaces */
+  --accent-fg: 15 15 20;
+  --danger: 248 113 113;
+  --success: 74 222 128;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+body {
+  background-color: rgb(var(--background));
+  color: rgb(var(--foreground));
+}
+
+/* Visible, consistent focus ring for keyboard navigation across all
+   interactive elements — never suppressed with outline: none. */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+  border-radius: 4px;
+}

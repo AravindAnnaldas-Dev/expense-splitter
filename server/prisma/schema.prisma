@@ -1,0 +1,139 @@
+// Prisma schema for the expense-splitting app.
+//
+// MODELING DECISIONS (why the relationships look this way):
+//
+// 1. User <-> Group is many-to-many, but a plain many-to-many isn't enough
+//    because we need per-membership metadata (joinedAt, and later things like
+//    a role). So we model it as two one-to-many relations through an explicit
+//    join model: GroupMember. This is the standard Prisma pattern for
+//    "many-to-many with extra fields."
+//
+// 2. Group -> Expense is one-to-many: every expense belongs to exactly one
+//    group. Expenses never move between groups.
+//
+// 3. Expense -> ExpenseShare is one-to-many: one expense fans out into N
+//    shares, one per participating member. This is what lets us support
+//    "split among only some of the group's members" later, and it's the
+//    ledger row we actually sum when computing balances — we never store a
+//    running balance anywhere, we always derive it from these rows.
+//
+// 4. Expense.paidById points at the GroupMember (not directly at User) that
+//    paid. We key everything off GroupMember rather than User because a
+//    User's financial position only makes sense *within a group* — the same
+//    person has an independent balance in "Goa Trip" and "Flatmates". Keying
+//    off GroupMember also means we never have to ask "is this user even a
+//    member of this group" separately from "whose share is this" — it's the
+//    same identity.
+//
+// 5. Settlement records an actual payment a user made to settle up (e.g. "I
+//    paid you back ₹500 in cash"). It is NOT the same as the greedy
+//    settlement *suggestion* the API computes on the fly — that suggestion is
+//    never persisted, because it must always reflect current data. Settlement
+//    rows are optional, user-confirmed records of real-world payments that
+//    reduce a balance the next time it's computed.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+
+  memberships GroupMember[]
+
+  @@map("users")
+}
+
+model Group {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  members  GroupMember[]
+  expenses Expense[]
+
+  @@map("groups")
+}
+
+// The join table between User and Group. One row = "this user is a member
+// of this group". All money movement (who paid, who owes) references this
+// row rather than the User directly, since balances are always scoped to a
+// single group.
+model GroupMember {
+  id       String   @id @default(cuid())
+  userId   String
+  groupId  String
+  joinedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  paidExpenses Expense[]      @relation("ExpensePaidBy")
+  shares       ExpenseShare[]
+  settlementsFrom Settlement[] @relation("SettlementFromMember")
+  settlementsTo   Settlement[] @relation("SettlementToMember")
+
+  // A user can only be a member of a given group once.
+  @@unique([userId, groupId])
+  @@map("group_members")
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  description String
+  // Stored in the smallest currency unit (paise / cents) as an integer so we
+  // never hit floating point rounding errors when splitting or summing.
+  amount      Int
+  groupId     String
+  paidById    String
+  createdAt   DateTime @default(now())
+
+  group   Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy  GroupMember @relation("ExpensePaidBy", fields: [paidById], references: [id])
+  shares  ExpenseShare[]
+
+  @@map("expenses")
+}
+
+// One row per member participating in an expense: "this member owes this
+// much of this expense." Equal-split amounts are pre-computed and stored
+// here at creation time (not recalculated on every read), so the record of
+// "who owed what" for a past expense never silently changes if the group's
+// membership changes later.
+model ExpenseShare {
+  id        String @id @default(cuid())
+  expenseId String
+  memberId  String
+  amount    Int // this member's owed portion, in the smallest currency unit
+
+  expense Expense     @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  member  GroupMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseId, memberId])
+  @@map("expense_shares")
+}
+
+// A real-world payment made to settle a balance (e.g. cash/UPI transfer
+// outside the app). Recording these lets the balance calculation net them
+// out against what expenses say is owed.
+model Settlement {
+  id        String   @id @default(cuid())
+  groupId   String
+  fromId    String // GroupMember who paid
+  toId      String // GroupMember who received
+  amount    Int
+  createdAt DateTime @default(now())
+
+  fromMember GroupMember @relation("SettlementFromMember", fields: [fromId], references: [id], onDelete: Cascade)
+  toMember   GroupMember @relation("SettlementToMember", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@map("settlements")
+}
