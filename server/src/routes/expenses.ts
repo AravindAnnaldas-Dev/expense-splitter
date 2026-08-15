@@ -30,7 +30,7 @@ async function getMembership(groupId: string, userId: string) {
  * rounding remainder on their share is deterministic and easy to explain
  * ("if it doesn't divide evenly, the odd cent stays with whoever paid").
  */
-function computeEqualShares(amount: number, memberIds: string[], paidById: string) {
+export function computeEqualShares(amount: number, memberIds: string[], paidById: string) {
   const n = memberIds.length;
   const base = Math.floor(amount / n);
   const remainder = amount - base * n;
@@ -94,6 +94,58 @@ router.post("/", async (req: AuthedRequest, res) => {
   });
 
   res.status(201).json({ expense });
+});
+
+const updateExpenseSchema = z.object({
+  description: z.string().min(1).max(200),
+  amount: z.number().int().positive("Amount must be a positive integer (smallest currency unit)"),
+  paidById: z.string().min(1),
+  memberIds: z.array(z.string().min(1)).min(1, "At least one member must be included in the split"),
+});
+
+router.patch("/:id", async (req: AuthedRequest, res) => {
+  const existing = await prisma.expense.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Expense not found" });
+
+  const membership = await getMembership(existing.groupId, req.userId as string);
+  if (!membership) return res.status(403).json({ error: "You are not a member of this group" });
+
+  const parsed = updateExpenseSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
+  const { description, amount, paidById, memberIds } = parsed.data;
+
+  const uniqueIds = Array.from(new Set([...memberIds, paidById]));
+  const validMembers = await prisma.groupMember.findMany({
+    where: { id: { in: uniqueIds }, groupId: existing.groupId },
+    select: { id: true },
+  });
+  if (validMembers.length !== uniqueIds.length) {
+    return res.status(400).json({ error: "One or more members do not belong to this group" });
+  }
+
+  const shares = computeEqualShares(amount, memberIds, paidById);
+
+  // Same atomicity concern as creation: replacing the share set for an
+  // expense means deleting the old rows and writing new ones, and a
+  // partial write here would leave shares that don't sum to the (possibly
+  // changed) amount — corrupting the balance calculation silently. The
+  // delete + recreate + expense-update all happen in one transaction.
+  const expense = await prisma.$transaction(async (tx) => {
+    await tx.expenseShare.deleteMany({ where: { expenseId: existing.id } });
+    await tx.expense.update({
+      where: { id: existing.id },
+      data: { description, amount, paidById },
+    });
+    await tx.expenseShare.createMany({
+      data: shares.map((s) => ({ expenseId: existing.id, memberId: s.memberId, amount: s.amount })),
+    });
+    return tx.expense.findUniqueOrThrow({
+      where: { id: existing.id },
+      include: { shares: true, paidBy: { include: { user: { select: { id: true, name: true } } } } },
+    });
+  });
+
+  res.json({ expense });
 });
 
 router.get("/:id", async (req: AuthedRequest, res) => {

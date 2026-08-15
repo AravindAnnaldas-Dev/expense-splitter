@@ -47,9 +47,27 @@ model User {
   name         String
   createdAt    DateTime @default(now())
 
-  memberships GroupMember[]
+  memberships   GroupMember[]
+  refreshTokens RefreshToken[]
 
   @@map("users")
+}
+
+// Backs the refresh-token flow (see src/lib/tokens.ts): access tokens are
+// short-lived JWTs that need no DB lookup, but refresh tokens are opaque
+// random strings stored here (hashed, never plaintext) so a logout or
+// suspected compromise can actually revoke one instead of just waiting out
+// its expiry — a bare stateless JWT can't be revoked before it expires.
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
 }
 
 model Group {

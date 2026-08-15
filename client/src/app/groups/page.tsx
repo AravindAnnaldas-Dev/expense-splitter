@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
@@ -21,15 +21,30 @@ export default function GroupsPage() {
 function GroupsDashboard() {
   const { data: groups, isLoading } = useGroups();
   const [modalOpen, setModalOpen] = useState(false);
+  const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
+  const router = useRouter();
+
+  // Next.js's client-side route transition can take a visible beat (first
+  // compile of the route's chunk, plus whatever the destination page fetches
+  // before it can render anything). Without this, a click just sits there
+  // looking unresponsive until the new page finally shows up. We flip a
+  // per-card "navigating" flag immediately on click so the card itself
+  // gives instant feedback, then let the actual navigation catch up.
+  function goToGroup(groupId: string) {
+    setNavigatingTo(groupId);
+    router.push(`/groups/${groupId}`);
+  }
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your groups</h1>
           <p className="mt-1 text-sm text-muted">Create a group to start splitting expenses.</p>
         </div>
-        <Button onClick={() => setModalOpen(true)}>New group</Button>
+        <Button onClick={() => setModalOpen(true)} className="w-full sm:w-auto">
+          New group
+        </Button>
       </div>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -43,16 +58,32 @@ function GroupsDashboard() {
           </Card>
         )}
 
-        {groups?.map((group) => (
-          <Link key={group.id} href={`/groups/${group.id}`}>
-            <Card className="p-5 transition-shadow duration-150 hover:shadow-elevated">
-              <h2 className="font-medium text-foreground">{group.name}</h2>
-              <p className="mt-1 text-sm text-muted">
-                {group.members.length} member{group.members.length !== 1 ? "s" : ""}
-              </p>
-            </Card>
-          </Link>
-        ))}
+        {groups?.map((group) => {
+          const isNavigating = navigatingTo === group.id;
+          return (
+            <button
+              key={group.id}
+              onClick={() => goToGroup(group.id)}
+              disabled={!!navigatingTo}
+              className="text-left disabled:cursor-wait"
+            >
+              <Card className="flex items-start justify-between p-5 transition-shadow duration-150 hover:shadow-elevated">
+                <div>
+                  <h2 className="font-medium text-foreground">{group.name}</h2>
+                  <p className="mt-1 text-sm text-muted">
+                    {group.members.length} member{group.members.length !== 1 ? "s" : ""}
+                  </p>
+                </div>
+                {isNavigating && (
+                  <span
+                    className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent"
+                    aria-label="Loading"
+                  />
+                )}
+              </Card>
+            </button>
+          );
+        })}
       </div>
 
       <CreateGroupModal open={modalOpen} onClose={() => setModalOpen(false)} />
